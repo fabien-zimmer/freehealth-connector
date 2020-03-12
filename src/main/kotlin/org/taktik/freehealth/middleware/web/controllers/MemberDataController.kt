@@ -35,8 +35,11 @@ import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.ResponseBody
 import org.springframework.web.bind.annotation.ResponseStatus
 import org.springframework.web.bind.annotation.RestController
+import org.taktik.connector.business.domain.common.GenAsyncResponse
+import org.taktik.freehealth.middleware.domain.memberdata.MemberDataBatchRequest
 import org.taktik.freehealth.middleware.dto.memberdata.FacetDto
 import org.taktik.freehealth.middleware.domain.memberdata.MemberDataResponse
+import org.taktik.freehealth.middleware.dto.memberdata.MemberDataBatchRequestDto
 import org.taktik.freehealth.middleware.exception.MissingTokenException
 import org.taktik.freehealth.middleware.service.MemberDataService
 import org.taktik.icure.cin.saml.extensions.Facet
@@ -62,7 +65,13 @@ class MemberDataController(val memberDataService: MemberDataService, val mapper:
     @ResponseBody
     fun handleBadRequest(req: HttpServletRequest, ex: Exception): String = ex.message ?: "unknown reason"
 
-    @PostMapping("/{ssin}", produces = [MediaType.APPLICATION_JSON_UTF8_VALUE])
+    @ResponseStatus(HttpStatus.UNAUTHORIZED)
+    @ExceptionHandler(javax.xml.ws.soap.SOAPFaultException::class)
+    @ResponseBody
+
+fun handleBadRequest(req: HttpServletRequest, ex: javax.xml.ws.soap.SOAPFaultException): String = ex.message ?: "unknown reason"
+
+@PostMapping("/{ssin}", produces = [MediaType.APPLICATION_JSON_UTF8_VALUE])
     fun queryMemberData(
         @PathVariable ssin: String,
         @RequestHeader(name = "X-FHC-tokenId") tokenId: UUID,
@@ -185,4 +194,35 @@ class MemberDataController(val memberDataService: MemberDataService, val mapper:
                                                endDate = endDate?.let { Instant.ofEpochMilli(it) } ?: ZonedDateTime.ofInstant(startDate, ZoneId.of(mcnTimezone)).truncatedTo(ChronoUnit.DAYS).plusDays(1).toInstant(),
                                                hospitalized = hospitalized ?: false)
     }
+
+    @PostMapping("/async/request/{io}", produces = [MediaType.APPLICATION_JSON_UTF8_VALUE])
+    fun sendMemberDataRequest(
+        @RequestHeader(name = "X-FHC-tokenId") tokenId: UUID,
+        @RequestHeader(name = "X-FHC-keystoreId") keystoreId: UUID,
+        @RequestHeader(name = "X-FHC-passPhrase") passPhrase: String,
+        @RequestParam hcpNihii: String,
+        @RequestParam hcpSsin: String,
+        @RequestParam hcpName: String,
+        @RequestParam(required = false) hcpQuality: String?,
+        @RequestParam(required = false) date: Long?,
+        @RequestParam(required = false) endDate: Long?,
+        @PathVariable io: String,
+        @RequestBody mdaRequest: MemberDataBatchRequestDto
+                             ): GenAsyncResponse {
+        val startDate: Instant = date?.let { Instant.ofEpochMilli(it) } ?: LocalDate.now().atStartOfDay(ZoneId.of(mcnTimezone)).toInstant()
+        return memberDataService.sendMemberDataRequest(
+            keystoreId = keystoreId,
+            tokenId = tokenId,
+            hcpQuality = hcpQuality ?: "doctor",
+            hcpNihii = hcpNihii,
+            hcpSsin = hcpSsin,
+            hcpName = hcpName,
+            io = io,
+            startDate = startDate,
+            endDate = endDate?.let { Instant.ofEpochMilli(it) } ?: ZonedDateTime.ofInstant(startDate, ZoneId.of(mcnTimezone)).truncatedTo(ChronoUnit.DAYS).plusDays(1).toInstant(),
+            passPhrase = passPhrase,
+            mdaRequest = mapper.map(mdaRequest, MemberDataBatchRequest::class.java)
+                                                      )
+    }
+
 }
